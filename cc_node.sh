@@ -110,27 +110,34 @@ install_node() {
     NODE_ID="${COUNTRY}-${CITY}-${NODE_IP}-${RANDOM_STR}"
     echo -e "${GREEN}✅ 节点代号确立: ${NODE_ID}${NC}"
 
-    echo -e "${YELLOW}[3/7] 正在向中控请求战略端口...${NC}"
-    REGISTER_RESP=$(curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
-        -H "Content-Type: application/json" \
-        -d "{\"node_id\": \"${NODE_ID}\"}" "${BRAIN_URL}/api/node/register")
+    if [ -n "$CUSTOM_WEB_PORT" ] && [ -n "$CUSTOM_SOCKS_PORT" ]; then
+        echo -e "${YELLOW}[3/7] 检测到自定义端口参数！跳过中控请求...${NC}"
+        BASE_PORT="$CUSTOM_WEB_PORT"
+        SOCKS_PORT="$CUSTOM_SOCKS_PORT"
+        echo -e "${GREEN}✅ 端口强行指派成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
+    else
+        echo -e "${YELLOW}[3/7] 正在向中控请求战略端口...${NC}"
+        REGISTER_RESP=$(curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "{\"node_id\": \"${NODE_ID}\"}" "${BRAIN_URL}/api/node/register")
 
-    STATUS=$(echo "$REGISTER_RESP" | jq -r '.status')
-    if [ "$STATUS" != "success" ]; then
-        echo -e "${RED}❌ 注册失败！大脑拒绝或端口池已满: $REGISTER_RESP${NC}"
-        [ "$SILENT_MODE" != true ] && sleep 3
-        return 1
+        STATUS=$(echo "$REGISTER_RESP" | jq -r '.status')
+        if [ "$STATUS" != "success" ]; then
+            echo -e "${RED}❌ 注册失败！大脑拒绝或端口池已满: $REGISTER_RESP${NC}"
+            [ "$SILENT_MODE" != true ] && sleep 3
+            return 1
+        fi
+
+        BASE_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.web_port')
+        SOCKS_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.proxy_port')
+
+        if [ "$BASE_PORT" == "null" ] || [ -z "$BASE_PORT" ]; then
+            echo -e "${RED}❌ 解析端口失败，请检查中控 API 返回格式！${NC}"
+            [ "$SILENT_MODE" != true ] && sleep 3
+            return 1
+        fi
+        echo -e "${GREEN}✅ 端口分配成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
     fi
-
-    BASE_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.web_port')
-    SOCKS_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.proxy_port')
-
-    if [ "$BASE_PORT" == "null" ] || [ -z "$BASE_PORT" ]; then
-        echo -e "${RED}❌ 解析端口失败，请检查中控 API 返回格式！${NC}"
-        [ "$SILENT_MODE" != true ] && sleep 3
-        return 1
-    fi
-    echo -e "${GREEN}✅ 端口分配成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
 
     echo -e "${YELLOW}[4/7] 正在拉取全局战略配置...${NC}"
     SYS_CONFIG_RESP=$(curl -s -X GET -H "X-API-Key: ${REPORT_SECRET}" "${BRAIN_URL}/api/system/configs")
@@ -382,8 +389,18 @@ show_logs() {
 # ==========================================
 # 🚀 5. 入口与主循环
 # ==========================================
-if [[ "$1" == "-s" || "$1" == "--silent" ]]; then
-    SILENT_MODE=true
+
+# 解析参数
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -s|--silent) SILENT_MODE=true; shift ;;
+        -w|--web) CUSTOM_WEB_PORT="$2"; shift 2 ;;
+        -p|--proxy) CUSTOM_SOCKS_PORT="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+if [ "$SILENT_MODE" == true ]; then
     check_and_run
 fi
 
