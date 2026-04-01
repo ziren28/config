@@ -7,7 +7,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 确保以 root 权限运行
+# 确保以 root 权限运行1.1
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./salad_node.sh)${NC}"
   exit 1
