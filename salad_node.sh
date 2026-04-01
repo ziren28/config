@@ -7,7 +7,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 确保以 root 权限运行v1.2
+# 确保以 root 权限运行v1.3
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./salad_node.sh)${NC}"
   exit 1
@@ -22,17 +22,17 @@ install_node() {
     echo -e "${GREEN}      🚀 开始部署 Salad Node 独立节点 🚀      ${NC}"
     echo -e "${CYAN}=================================================${NC}"
 
-    read -p "请输入中控大脑 URL [默认: https://sala.181225.xyz]: " INPUT_URL
-    BRAIN_URL=${INPUT_URL:-"https://sala.181225.xyz"}
+    read -p "请输入中控大脑 URL [默认: https://ziren28-sala.hf.space]: " INPUT_URL
+    BRAIN_URL=${INPUT_URL:-"https://ziren28-sala.hf.space"}
     BRAIN_URL=${BRAIN_URL%/}
 
     read -p "请输入 REPORT_SECRET [默认: salad_report_maxking2026]: " INPUT_SECRET
     REPORT_SECRET=${INPUT_SECRET:-"salad_report_maxking2026"}
     
-    echo -e "\n${YELLOW}[1/6] 正在安装基础依赖 (curl, jq, wget)...${NC}"
+    echo -e "\n${YELLOW}[1/7] 正在安装基础依赖 (curl, jq, wget)...${NC}"
     apt-get update -y -qq && apt-get install -y -qq wget curl jq
 
-    echo -e "${YELLOW}[2/6] 正在探测节点网络情报...${NC}"
+    echo -e "${YELLOW}[2/7] 正在探测节点网络情报...${NC}"
     IP_INFO=$(curl -s --max-time 5 https://api.ip.sb/geoip || echo "{}")
     COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code')
     CITY=$(echo "$IP_INFO" | jq -r '.city')
@@ -50,7 +50,8 @@ install_node() {
     NODE_ID="${COUNTRY}-${CITY}-${NODE_IP}-${RANDOM_STR}"
     echo -e "${GREEN}✅ 节点代号确立: ${NODE_ID}${NC}"
 
-    echo -e "${YELLOW}[3/6] 正在向中控大脑 (${BRAIN_URL}) 请求战略端口...${NC}"
+    # --- 3. 注册获取端口 ---
+    echo -e "${YELLOW}[3/7] 正在向中控请求战略端口...${NC}"
     REGISTER_RESP=$(curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
         -H "Content-Type: application/json" \
         -d "{\"node_id\": \"${NODE_ID}\"}" "${BRAIN_URL}/api/node/register")
@@ -68,16 +69,33 @@ install_node() {
         echo -e "${RED}❌ 解析端口失败，请检查中控 API 返回格式！${NC}"
         sleep 3; return
     fi
+    echo -e "${GREEN}✅ 端口分配成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
 
-    echo -e "${GREEN}✅ 获取端口成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
+    # --- 4. 获取全局系统配置 (严格匹配你的 JSON) ---
+    echo -e "${YELLOW}[4/7] 正在拉取全局战略配置...${NC}"
+    SYS_CONFIG_RESP=$(curl -s -X GET -H "X-API-Key: ${REPORT_SECRET}" "${BRAIN_URL}/api/system/configs")
+    
+    # 💡 核心修复：完全对齐你数据库里的真实键名
+    FRPS_ADDR=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_SERVER_ADDR // "frps.181225.xyz"')
+    FRPS_PORT=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_SERVER_PORT // "7000"')
+    FRPS_TOKEN=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_AUTH_TOKEN // "maxking2026"')
+    PROXY_USER=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.PROXY_USER // "maxking"')
+    PROXY_PASS=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.PROXY_PASS // "maxking2026"')
+    DISPLAY_ADDR=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_DISPLAY_ADDR // "frps.181225.xyz"')
 
+    echo -e "${GREEN}✅ 配置拉取成功！远端靶机: ${FRPS_ADDR}${NC}"
+
+    # 保存配置到本地文件供状态菜单读取
     cat <<EOT > /etc/salad_node.info
-FRPS_ADDR="frps.181225.xyz"
+FRPS_ADDR="${DISPLAY_ADDR}"
 WEB_PORT="${BASE_PORT}"
 SOCKS_PORT="${SOCKS_PORT}"
+PROXY_USER="${PROXY_USER}"
+PROXY_PASS="${PROXY_PASS}"
 EOT
 
-    echo -e "${YELLOW}[4/6] 正在下载 Gost 与 FRPC...${NC}"
+    # --- 5. 下载组件 ---
+    echo -e "${YELLOW}[5/7] 正在下载 Gost 与 FRPC...${NC}"
     if [ ! -f "/usr/local/bin/gost" ]; then
         wget -qO- https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gzip -d > /usr/local/bin/gost
         chmod +x /usr/local/bin/gost
@@ -88,16 +106,17 @@ EOT
         rm -rf frp.tar.gz frp_0.61.1_linux_amd64
     fi
 
-    echo -e "${YELLOW}[5/6] 正在生成系统服务与配置文件...${NC}"
+    # --- 6. 生成动态化配置 ---
+    echo -e "${YELLOW}[6/7] 正在动态渲染系统服务与配置文件...${NC}"
     
     mkdir -p /etc/frp
     cat <<EOT > /etc/frp/frpc.toml
-serverAddr = "frps.181225.xyz"
-serverPort = 7000
+serverAddr = "${FRPS_ADDR}"
+serverPort = ${FRPS_PORT}
 
 [auth]
 method = "token"
-token = "maxking2026"
+token = "${FRPS_TOKEN}"
 
 [[proxies]]
 name = "web-${COUNTRY}-${CITY}-${NODE_IP}-tcp${BASE_PORT}"
@@ -131,7 +150,7 @@ EOT
 Description=Salad Gost Proxy
 After=network.target
 [Service]
-ExecStart=/usr/local/bin/gost -L maxking:maxking2026@:1080
+ExecStart=/usr/local/bin/gost -L ${PROXY_USER}:${PROXY_PASS}@:1080
 Restart=always
 [Install]
 WantedBy=multi-user.target
@@ -160,15 +179,15 @@ Restart=always
 WantedBy=multi-user.target
 EOT
 
-    echo -e "${YELLOW}[6/6] 正在启动所有守护进程...${NC}"
+    # --- 7. 启动服务 ---
+    echo -e "${YELLOW}[7/7] 正在启动所有守护进程...${NC}"
     systemctl daemon-reload
     systemctl enable --now salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
 
-    # 💡 核心改动：装完直接把战果甩在屏幕上！
     echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并上线。${NC}"
     echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
-    echo -e "🌐 Web 桌面地址:  ${GREEN}http://frps.181225.xyz:${BASE_PORT}${NC}"
-    echo -e "🧦 Socks5 代理:   ${GREEN}socks5://maxking:maxking2026@frps.181225.xyz:${SOCKS_PORT}${NC}"
+    echo -e "🌐 Web 桌面地址:  ${GREEN}http://${DISPLAY_ADDR}:${BASE_PORT}${NC}"
+    echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${DISPLAY_ADDR}:${SOCKS_PORT}${NC}"
     echo -e "\n${YELLOW}(提示: 直接复制链接使用，日后也可在主菜单按 2 查看)${NC}"
     
     echo -e "\n按任意键返回主菜单..."
@@ -211,8 +230,7 @@ show_status() {
         source /etc/salad_node.info
         echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
         echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
-        echo -e "🧦 Socks5 代理:   ${GREEN}socks5://maxking:maxking2026@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
-        echo -e "\n${YELLOW}(提示: 直接复制 Socks5 链接到 V2rayN/Clash 等代理软件，或浏览器插件中即可上网)${NC}"
+        echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
     else
         echo -e "\n${YELLOW}⚠️ 暂无访问信息 (可能是还没安装或者安装失败了)${NC}"
     fi
@@ -240,7 +258,7 @@ show_logs() {
 while true; do
     clear
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.3 🚀          ${NC}"
+    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.5 🚀          ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "  ${YELLOW}1.${NC} ⚡ 一键安装并上线节点 (Install & Start)"
     echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态与配置 (View Status)"
