@@ -8,8 +8,8 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # --- 默认配置 (静默模式将直接使用这些) ---
-DEFAULT_BRAIN_URL="https://ziren28-sala.hf.space"
-DEFAULT_REPORT_SECRET="salad_report_maxking2026"
+DEFAULT_BRAIN_URL=${CC_URL:-"https://ziren28-sala.hf.space"}
+DEFAULT_REPORT_SECRET=${CC_SECRET:-"Change_Me_Please"}
 
 # 确保以 root 权限运行v1.5
 if [ "$EUID" -ne 0 ]; then
