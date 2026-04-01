@@ -13,7 +13,7 @@ DEFAULT_REPORT_SECRET=${CC_SECRET:-"Change_Me_Please"}
 
 # 确保以 root 权限运行
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./salad_node.sh)${NC}"
+  echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./cc_node.sh)${NC}"
   exit 1
 fi
 
@@ -22,9 +22,9 @@ fi
 # ==========================================
 check_systemd() {
     if pidof systemd &> /dev/null || [ -d "/run/systemd/system" ]; then
-        return 0 # true, 存在 systemd
+        return 0 # true
     else
-        return 1 # false, 不存在 systemd (如常规 Docker 容器)
+        return 1 # false
     fi
 }
 
@@ -36,15 +36,15 @@ print_status_info() {
     echo -e "${GREEN}                节点运行状态监控                 ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     
-    # 根据是否有 systemd 采用不同的状态检查逻辑
     if check_systemd; then
         systemctl is-active --quiet salad-frpc && FRPC_STAT="[ ${GREEN}运行中${NC} ]" || FRPC_STAT="[ ${RED}已停止${NC} ]"
         systemctl is-active --quiet salad-gost && GOST_STAT="[ ${GREEN}运行中${NC} ]" || GOST_STAT="[ ${RED}已停止${NC} ]"
         systemctl is-active --quiet salad-heartbeat && HB_STAT="[ ${GREEN}运行中${NC} ]" || HB_STAT="[ ${RED}已停止${NC} ]"
     else
-        pgrep -x "frpc" > /dev/null && FRPC_STAT="[ ${GREEN}运行中${NC} ] (无守护)" || FRPC_STAT="[ ${RED}已停止${NC} ]"
-        pgrep -x "gost" > /dev/null && GOST_STAT="[ ${GREEN}运行中${NC} ] (无守护)" || GOST_STAT="[ ${RED}已停止${NC} ]"
-        pgrep -f "salad_heartbeat.sh" > /dev/null && HB_STAT="[ ${GREEN}运行中${NC} ] (无守护)" || HB_STAT="[ ${RED}已停止${NC} ]"
+        # 检查 Supervisor 状态
+        supervisorctl status salad-frpc 2>/dev/null | grep -q "RUNNING" && FRPC_STAT="[ ${GREEN}运行中${NC} ] (Supervisor守护)" || FRPC_STAT="[ ${RED}已停止${NC} ]"
+        supervisorctl status salad-gost 2>/dev/null | grep -q "RUNNING" && GOST_STAT="[ ${GREEN}运行中${NC} ] (Supervisor守护)" || GOST_STAT="[ ${RED}已停止${NC} ]"
+        supervisorctl status salad-heartbeat 2>/dev/null | grep -q "RUNNING" && HB_STAT="[ ${GREEN}运行中${NC} ] (Supervisor守护)" || HB_STAT="[ ${RED}已停止${NC} ]"
     fi
 
     echo -e "FRPC 隧道: $FRPC_STAT"
@@ -83,11 +83,11 @@ install_node() {
     fi
     BRAIN_URL=${BRAIN_URL%/}
     
-    echo -e "\n${YELLOW}[1/7] 正在安装基础依赖 (curl, jq, wget, procps)...${NC}"
-    apt-get update -y -qq && apt-get install -y -qq wget curl jq procps > /dev/null 2>&1
+    echo -e "\n${YELLOW}[1/7] 正在安装基础依赖 (包含 Supervisor)...${NC}"
+    # 强制安装 supervisor
+    apt-get update -y -qq && apt-get install -y -qq wget curl jq procps supervisor > /dev/null 2>&1
 
     echo -e "${YELLOW}[2/7] 正在探测节点网络情报 (使用 ipwho.is)...${NC}"
-    # 使用无拦截的 ipwho.is 接口并适配其 JSON 字段
     IP_INFO=$(curl -s --max-time 5 https://ipwho.is/ || echo "{}")
     COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code // "UNK"')
     CITY=$(echo "$IP_INFO" | jq -r '.city // "UNK"')
@@ -133,8 +133,6 @@ install_node() {
     PROXY_PASS=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.PROXY_PASS // "maxking2026"')
     DISPLAY_ADDR=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_DISPLAY_ADDR // "frps.181225.xyz"')
 
-    echo -e "${GREEN}✅ 配置拉取成功！远端靶机: ${FRPS_ADDR}${NC}"
-
     cat <<EOT > /etc/salad_node.info
 FRPS_ADDR="${DISPLAY_ADDR}"
 WEB_PORT="${BASE_PORT}"
@@ -154,7 +152,7 @@ EOT
         rm -rf frp.tar.gz frp_0.61.1_linux_amd64
     fi
 
-    echo -e "${YELLOW}[6/7] 正在动态渲染系统服务与配置文件...${NC}"
+    echo -e "${YELLOW}[6/7] 正在动态渲染配置文件...${NC}"
     
     mkdir -p /etc/frp
     cat <<EOT > /etc/frp/frpc.toml
@@ -192,10 +190,10 @@ done
 EOT
     chmod +x /usr/local/bin/salad_heartbeat.sh
 
-    echo -e "${YELLOW}[7/7] 正在启动所有守护进程...${NC}"
+    echo -e "${YELLOW}[7/7] 正在注册并启动守护进程...${NC}"
     
     if check_systemd; then
-        # 系统环境：使用 systemctl 注册并启动
+        # 宿主机环境：使用 systemd
         cat <<EOT > /etc/systemd/system/salad-gost.service
 [Unit]
 Description=Salad Gost Proxy
@@ -232,17 +230,48 @@ EOT
         systemctl daemon-reload
         systemctl enable --now salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
     else
-        # Docker 环境：清理旧进程后直接后台静默启动
-        pkill -x gost 2>/dev/null
-        pkill -x frpc 2>/dev/null
-        pkill -f "salad_heartbeat.sh" 2>/dev/null
+        # 容器环境：使用 Supervisor 强力接管
+        mkdir -p /etc/supervisor/conf.d
         
-        nohup /usr/local/bin/gost -L ${PROXY_USER}:${PROXY_PASS}@:1080 > /var/log/salad-gost.log 2>&1 &
-        nohup /usr/local/bin/frpc -c /etc/frp/frpc.toml > /var/log/salad-frpc.log 2>&1 &
-        nohup /usr/local/bin/salad_heartbeat.sh > /var/log/salad-heartbeat.log 2>&1 &
+        cat <<EOT > /etc/supervisor/conf.d/salad-gost.conf
+[program:salad-gost]
+command=/usr/local/bin/gost -L ${PROXY_USER}:${PROXY_PASS}@:1080
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/salad-gost.err.log
+stdout_logfile=/var/log/salad-gost.out.log
+EOT
+
+        cat <<EOT > /etc/supervisor/conf.d/salad-frpc.conf
+[program:salad-frpc]
+command=/usr/local/bin/frpc -c /etc/frp/frpc.toml
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/salad-frpc.err.log
+stdout_logfile=/var/log/salad-frpc.out.log
+EOT
+
+        cat <<EOT > /etc/supervisor/conf.d/salad-heartbeat.conf
+[program:salad-heartbeat]
+command=/usr/local/bin/salad_heartbeat.sh
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/salad-heartbeat.err.log
+stdout_logfile=/var/log/salad-heartbeat.out.log
+EOT
+
+        # 确保 supervisord 主进程在运行
+        if ! pgrep -x "supervisord" > /dev/null; then
+            /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+        fi
+        
+        # 让 supervisor 重新读取并启动所有我们的进程
+        supervisorctl reread >/dev/null 2>&1
+        supervisorctl update >/dev/null 2>&1
+        supervisorctl start salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
     fi
 
-    echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并上线。${NC}"
+    echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并受守护进程保护。${NC}"
     
     print_status_info
 
@@ -252,10 +281,9 @@ EOT
 }
 
 # ==========================================
-# 🤖 2. 静默检测与执行逻辑 (幂等性核心)
+# 🤖 2. 静默检测与执行逻辑
 # ==========================================
 check_and_run() {
-    # 适配不同环境的判断机制
     if check_systemd; then
         if systemctl is-active --quiet salad-frpc && systemctl is-active --quiet salad-gost; then
             echo -e "${GREEN}✅ 检测到节点已经在运行，自动跳过安装流程！${NC}\n"
@@ -263,14 +291,14 @@ check_and_run() {
             exit 0
         fi
     else
-        if pgrep -x "frpc" > /dev/null && pgrep -x "gost" > /dev/null; then
-            echo -e "${GREEN}✅ 检测到容器内节点进程已经在运行，自动跳过！${NC}\n"
+        if supervisorctl status salad-frpc 2>/dev/null | grep -q "RUNNING" && supervisorctl status salad-gost 2>/dev/null | grep -q "RUNNING"; then
+            echo -e "${GREEN}✅ 检测到容器内 Supervisor 守护进程已经在运行，自动跳过！${NC}\n"
             print_status_info
             exit 0
         fi
     fi
 
-    echo -e "${YELLOW}⚠️ 检测到服务异常或未安装，正在触发自动修复/部署...${NC}\n"
+    echo -e "${YELLOW}⚠️ 检测到服务异常或未安装，正在触发自动部署...${NC}\n"
     install_node
     exit 0
 }
@@ -288,9 +316,9 @@ uninstall_node() {
         rm -f /etc/systemd/system/salad-heartbeat.service
         systemctl daemon-reload
     else
-        pkill -x gost 2>/dev/null
-        pkill -x frpc 2>/dev/null
-        pkill -f "salad_heartbeat.sh" 2>/dev/null
+        supervisorctl stop salad-gost salad-frpc salad-heartbeat 2>/dev/null
+        rm -f /etc/supervisor/conf.d/salad-*.conf
+        supervisorctl update 2>/dev/null
     fi
     
     rm -f /usr/local/bin/salad_heartbeat.sh
@@ -326,9 +354,9 @@ show_logs() {
         esac
     else
         case $log_choice in
-            1) tail -f /var/log/salad-frpc.log ;;
-            2) tail -f /var/log/salad-gost.log ;;
-            3) tail -f /var/log/salad-heartbeat.log ;;
+            1) tail -f /var/log/salad-frpc.out.log /var/log/salad-frpc.err.log ;;
+            2) tail -f /var/log/salad-gost.out.log /var/log/salad-gost.err.log ;;
+            3) tail -f /var/log/salad-heartbeat.out.log /var/log/salad-heartbeat.err.log ;;
             *) echo "无效选择" ;;
         esac
     fi
@@ -345,7 +373,7 @@ fi
 while true; do
     clear
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.9 🚀          ${NC}"
+    echo -e "${GREEN}          🚀 Salad 节点管理终端 V4.0 🚀          ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "  ${YELLOW}1.${NC} ⚡ 一键安装并上线节点 (Install & Start)"
     echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态与配置 (View Status)"
@@ -366,11 +394,7 @@ while true; do
            if check_systemd; then
                systemctl restart salad-gost salad-frpc salad-heartbeat
            else
-               pkill -x gost; pkill -x frpc; pkill -f "salad_heartbeat.sh"
-               source /etc/salad_node.info
-               nohup /usr/local/bin/gost -L ${PROXY_USER}:${PROXY_PASS}@:1080 > /var/log/salad-gost.log 2>&1 &
-               nohup /usr/local/bin/frpc -c /etc/frp/frpc.toml > /var/log/salad-frpc.log 2>&1 &
-               nohup /usr/local/bin/salad_heartbeat.sh > /var/log/salad-heartbeat.log 2>&1 &
+               supervisorctl restart salad-gost salad-frpc salad-heartbeat
            fi
            echo -e "${GREEN}✅ 重启完成！${NC}"
            sleep 1 ;;
@@ -379,7 +403,7 @@ while true; do
            if check_systemd; then
                systemctl stop salad-gost salad-frpc salad-heartbeat
            else
-               pkill -x gost; pkill -x frpc; pkill -f "salad_heartbeat.sh"
+               supervisorctl stop salad-gost salad-frpc salad-heartbeat
            fi
            echo -e "${GREEN}✅ 已停止！${NC}"
            sleep 1 ;;
