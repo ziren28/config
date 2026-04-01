@@ -29,6 +29,11 @@ CC Node 是一个高度自动化的分布式代理节点部署与控制脚本。
 
 ```bash
 curl -sSL -o cc_node.sh [https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh](https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh) && chmod +x cc_node.sh && sudo CC_URL="https://你的中控地址" CC_SECRET="你的接头暗号" ./cc_node.sh --silent
+
+```bash
+curl -sSL -o cc_node.sh https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh && chmod +x cc_node.sh && sudo CC_SECRET="salad_report_maxking2026" ./cc_node.sh -s
+
+
 方式二：交互式安装（推荐用于单机人工调测）
 带有完整的安装进度条与参数输入提示：
 
