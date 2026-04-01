@@ -7,42 +7,70 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 确保以 root 权限运行v1.3
+# --- 默认配置 (静默模式将直接使用这些) ---
+DEFAULT_BRAIN_URL="https://ziren28-sala.hf.space"
+DEFAULT_REPORT_SECRET="salad_report_maxking2026"
+
+# 确保以 root 权限运行v1.5
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./salad_node.sh)${NC}"
   exit 1
 fi
 
 # ==========================================
+# 🖨️ 0. 核心信息打印模块
+# ==========================================
+print_status_info() {
+    echo -e "${CYAN}=================================================${NC}"
+    echo -e "${GREEN}                节点运行状态监控                 ${NC}"
+    echo -e "${CYAN}=================================================${NC}"
+    
+    systemctl is-active --quiet salad-frpc && echo -e "FRPC 隧道: [ ${GREEN}运行中${NC} ]" || echo -e "FRPC 隧道: [ ${RED}已停止${NC} ]"
+    systemctl is-active --quiet salad-gost && echo -e "Gost 代理: [ ${GREEN}运行中${NC} ]" || echo -e "Gost 代理: [ ${RED}已停止${NC} ]"
+    systemctl is-active --quiet salad-heartbeat && echo -e "心跳守护:  [ ${GREEN}运行中${NC} ]" || echo -e "心跳守护:  [ ${RED}已停止${NC} ]"
+    
+    if [ -f /etc/salad_node.info ]; then
+        source /etc/salad_node.info
+        echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
+        echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
+        echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
+    else
+        echo -e "\n${YELLOW}⚠️ 暂无访问信息 (可能是还没安装或者安装失败了)${NC}"
+    fi
+    echo ""
+}
+
+# ==========================================
 # 🚀 1. 核心安装与部署逻辑
 # ==========================================
 install_node() {
-    clear
+    [ "$SILENT_MODE" != true ] && clear
     echo -e "${CYAN}=================================================${NC}"
     echo -e "${GREEN}      🚀 开始部署 Salad Node 独立节点 🚀      ${NC}"
     echo -e "${CYAN}=================================================${NC}"
 
-    read -p "请输入中控大脑 URL [默认: https://ziren28-sala.hf.space]: " INPUT_URL
-    BRAIN_URL=${INPUT_URL:-"https://ziren28-sala.hf.space"}
+    if [ "$SILENT_MODE" == true ]; then
+        BRAIN_URL=$DEFAULT_BRAIN_URL
+        REPORT_SECRET=$DEFAULT_REPORT_SECRET
+        echo -e "${YELLOW}🤫 静默模式启动，使用默认配置...${NC}"
+    else
+        read -p "请输入中控大脑 URL [默认: $DEFAULT_BRAIN_URL]: " INPUT_URL
+        BRAIN_URL=${INPUT_URL:-"$DEFAULT_BRAIN_URL"}
+        read -p "请输入 REPORT_SECRET [默认: $DEFAULT_REPORT_SECRET]: " INPUT_SECRET
+        REPORT_SECRET=${INPUT_SECRET:-"$DEFAULT_REPORT_SECRET"}
+    fi
     BRAIN_URL=${BRAIN_URL%/}
-
-    read -p "请输入 REPORT_SECRET [默认: salad_report_maxking2026]: " INPUT_SECRET
-    REPORT_SECRET=${INPUT_SECRET:-"salad_report_maxking2026"}
     
     echo -e "\n${YELLOW}[1/7] 正在安装基础依赖 (curl, jq, wget)...${NC}"
-    apt-get update -y -qq && apt-get install -y -qq wget curl jq
+    apt-get update -y -qq && apt-get install -y -qq wget curl jq > /dev/null 2>&1
 
     echo -e "${YELLOW}[2/7] 正在探测节点网络情报...${NC}"
     IP_INFO=$(curl -s --max-time 5 https://api.ip.sb/geoip || echo "{}")
-    COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code')
-    CITY=$(echo "$IP_INFO" | jq -r '.city')
-    NODE_IP=$(echo "$IP_INFO" | jq -r '.ip')
-
-    [ "$COUNTRY" == "null" ] || [ -z "$COUNTRY" ] && COUNTRY="UNK"
-    [ "$NODE_IP" == "null" ] || [ -z "$NODE_IP" ] && NODE_IP="0.0.0.0"
-    if [ "$CITY" == "null" ] || [ -z "$CITY" ]; then
-        CITY="UNK"
-    else
+    COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code // "UNK"')
+    CITY=$(echo "$IP_INFO" | jq -r '.city // "UNK"')
+    NODE_IP=$(echo "$IP_INFO" | jq -r '.ip // "0.0.0.0"')
+    
+    if [ "$CITY" != "UNK" ]; then
         CITY=$(echo "$CITY" | tr -cd '[:alnum:]' | tr '[:lower:]' '[:upper:]' | cut -c 1-6)
     fi
 
@@ -50,7 +78,6 @@ install_node() {
     NODE_ID="${COUNTRY}-${CITY}-${NODE_IP}-${RANDOM_STR}"
     echo -e "${GREEN}✅ 节点代号确立: ${NODE_ID}${NC}"
 
-    # --- 3. 注册获取端口 ---
     echo -e "${YELLOW}[3/7] 正在向中控请求战略端口...${NC}"
     REGISTER_RESP=$(curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
         -H "Content-Type: application/json" \
@@ -59,7 +86,8 @@ install_node() {
     STATUS=$(echo "$REGISTER_RESP" | jq -r '.status')
     if [ "$STATUS" != "success" ]; then
         echo -e "${RED}❌ 注册失败！大脑拒绝或端口池已满: $REGISTER_RESP${NC}"
-        sleep 3; return
+        [ "$SILENT_MODE" != true ] && sleep 3
+        return 1
     fi
 
     BASE_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.web_port')
@@ -67,15 +95,14 @@ install_node() {
 
     if [ "$BASE_PORT" == "null" ] || [ -z "$BASE_PORT" ]; then
         echo -e "${RED}❌ 解析端口失败，请检查中控 API 返回格式！${NC}"
-        sleep 3; return
+        [ "$SILENT_MODE" != true ] && sleep 3
+        return 1
     fi
     echo -e "${GREEN}✅ 端口分配成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
 
-    # --- 4. 获取全局系统配置 (严格匹配你的 JSON) ---
     echo -e "${YELLOW}[4/7] 正在拉取全局战略配置...${NC}"
     SYS_CONFIG_RESP=$(curl -s -X GET -H "X-API-Key: ${REPORT_SECRET}" "${BRAIN_URL}/api/system/configs")
     
-    # 💡 核心修复：完全对齐你数据库里的真实键名
     FRPS_ADDR=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_SERVER_ADDR // "frps.181225.xyz"')
     FRPS_PORT=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_SERVER_PORT // "7000"')
     FRPS_TOKEN=$(echo "$SYS_CONFIG_RESP" | jq -r '.data.FRPS_AUTH_TOKEN // "maxking2026"')
@@ -85,7 +112,6 @@ install_node() {
 
     echo -e "${GREEN}✅ 配置拉取成功！远端靶机: ${FRPS_ADDR}${NC}"
 
-    # 保存配置到本地文件供状态菜单读取
     cat <<EOT > /etc/salad_node.info
 FRPS_ADDR="${DISPLAY_ADDR}"
 WEB_PORT="${BASE_PORT}"
@@ -94,7 +120,6 @@ PROXY_USER="${PROXY_USER}"
 PROXY_PASS="${PROXY_PASS}"
 EOT
 
-    # --- 5. 下载组件 ---
     echo -e "${YELLOW}[5/7] 正在下载 Gost 与 FRPC...${NC}"
     if [ ! -f "/usr/local/bin/gost" ]; then
         wget -qO- https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gzip -d > /usr/local/bin/gost
@@ -106,7 +131,6 @@ EOT
         rm -rf frp.tar.gz frp_0.61.1_linux_amd64
     fi
 
-    # --- 6. 生成动态化配置 ---
     echo -e "${YELLOW}[6/7] 正在动态渲染系统服务与配置文件...${NC}"
     
     mkdir -p /etc/frp
@@ -179,23 +203,40 @@ Restart=always
 WantedBy=multi-user.target
 EOT
 
-    # --- 7. 启动服务 ---
     echo -e "${YELLOW}[7/7] 正在启动所有守护进程...${NC}"
     systemctl daemon-reload
     systemctl enable --now salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
 
     echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并上线。${NC}"
-    echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
-    echo -e "🌐 Web 桌面地址:  ${GREEN}http://${DISPLAY_ADDR}:${BASE_PORT}${NC}"
-    echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${DISPLAY_ADDR}:${SOCKS_PORT}${NC}"
-    echo -e "\n${YELLOW}(提示: 直接复制链接使用，日后也可在主菜单按 2 查看)${NC}"
     
-    echo -e "\n按任意键返回主菜单..."
-    read -n 1
+    # 安装完成后，无论什么模式，都打印一遍战果
+    print_status_info
+
+    # 如果不是静默模式，提示按键返回
+    if [ "$SILENT_MODE" != true ]; then
+        read -n 1 -p "按任意键返回主菜单..."
+    fi
 }
 
 # ==========================================
-# 🗑️ 2. 卸载节点逻辑
+# 🤖 2. 静默检测与执行逻辑 (幂等性核心)
+# ==========================================
+check_and_run() {
+    # 检查服务是否都在运行
+    if systemctl is-active --quiet salad-frpc && systemctl is-active --quiet salad-gost; then
+        echo -e "${GREEN}✅ 检测到节点已经在运行，自动跳过安装流程！${NC}\n"
+        # 直接甩出战果
+        print_status_info
+        exit 0
+    else
+        echo -e "${YELLOW}⚠️ 检测到服务异常或未安装，正在触发自动修复/部署...${NC}\n"
+        install_node
+        exit 0
+    fi
+}
+
+# ==========================================
+# 🗑️ 3. 卸载节点逻辑
 # ==========================================
 uninstall_node() {
     echo -e "${RED}⚠️ 准备卸载并清理所有节点服务...${NC}"
@@ -214,29 +255,12 @@ uninstall_node() {
 }
 
 # ==========================================
-# 📊 3. 菜单控制逻辑
+# 📊 4. 菜单控制模块
 # ==========================================
 show_status() {
     clear
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}                节点运行状态监控                 ${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    
-    systemctl is-active --quiet salad-frpc && echo -e "FRPC 隧道: [ ${GREEN}运行中${NC} ]" || echo -e "FRPC 隧道: [ ${RED}已停止${NC} ]"
-    systemctl is-active --quiet salad-gost && echo -e "Gost 代理: [ ${GREEN}运行中${NC} ]" || echo -e "Gost 代理: [ ${RED}已停止${NC} ]"
-    systemctl is-active --quiet salad-heartbeat && echo -e "心跳守护:  [ ${GREEN}运行中${NC} ]" || echo -e "心跳守护:  [ ${RED}已停止${NC} ]"
-    
-    if [ -f /etc/salad_node.info ]; then
-        source /etc/salad_node.info
-        echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
-        echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
-        echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
-    else
-        echo -e "\n${YELLOW}⚠️ 暂无访问信息 (可能是还没安装或者安装失败了)${NC}"
-    fi
-
-    echo -e "\n按任意键返回主菜单..."
-    read -n 1
+    print_status_info
+    read -n 1 -p "按任意键返回主菜单..."
 }
 
 show_logs() {
@@ -254,11 +278,20 @@ show_logs() {
     esac
 }
 
-# --- 主循环 ---
+# ==========================================
+# 🚀 5. 入口与主循环
+# ==========================================
+# 解析静默参数
+if [[ "$1" == "-s" || "$1" == "--silent" ]]; then
+    SILENT_MODE=true
+    check_and_run
+fi
+
+# 交互式主菜单
 while true; do
     clear
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.5 🚀          ${NC}"
+    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.7 🚀          ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "  ${YELLOW}1.${NC} ⚡ 一键安装并上线节点 (Install & Start)"
     echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态与配置 (View Status)"
@@ -271,7 +304,7 @@ while true; do
     read -p "请输入对应的数字 [0-9]: " choice
 
     case $choice in
-        1) install_node ;;
+        1) SILENT_MODE=false; install_node ;;
         2) show_status ;;
         3) show_logs ;;
         4) 
