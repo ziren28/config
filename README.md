@@ -3,70 +3,73 @@
 ![Version](https://img.shields.io/badge/Version-V3.8-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Systemd-lightgrey.svg)
 ![Security](https://img.shields.io/badge/Security-Encapsulated-red.svg)
+![Status](https://img.shields.io/badge/Status-Stable-brightgreen.svg)
 
-CC Node 是一个高度自动化的分布式代理节点部署与控制脚本。采用 **C&C (Command and Control) 架构**，实现“代码与配置彻底分离”。节点端无需硬编码任何敏感信息，所有核心逻辑均通过中控大脑（Control Brain）动态下发。
+CC Node 是一个高度自动化的分布式代理节点部署与控制脚本。它基于 **C&C (Command and Control) 架构** 设计，实现“代码与配置彻底分离”。节点端 **0 硬编码敏感信息**，所有网络隧道配置、端口分配及鉴权信息均由中控大脑（Control Brain）动态下发。
 
----
-
-## ⚠️ 安全操作审计 (OPSEC)
-
-为了确保你的基础设施不被探测和利用，本脚本不再硬编码任何 `SECRET` 或 `URL`。
-**在部署前，请务必根据下文的“配置指南”设置你自己的环境变量。**
+> ⚠️ **OPSEC 部署守则**: 为防止基础设施暴露，本开源仓库不包含任何真实密钥。执行点火部署时，请务必通过环境变量 (`CC_URL` 与 `CC_SECRET`) 注入你的专属通信暗号。
 
 ---
 
 ## ✨ 核心特性
 
-- 🧠 **C&C 动态情报中心**：节点启动后通过 API 握手，动态拉取 `FRPS` 穿透配置、代理账号密码。支持全网节点一键热切换。
-- 🌍 **地理坐标感知**：自动探测物理地理位置并生成唯一 `NODE_ID`，完美解决 NAT 环境下的身份冲突。
-- 🛡️ **原生系统级守护**：利用 Linux Systemd 接管核心进程，支持崩溃自动拉起（5s 延迟）与开机自启。
-- 🤫 **幂等静默维护**：支持 `--silent` 参数，自动检测节点健康度。已运行则跳过，配置损坏或服务停止则自动修复，适合大规模并发部署。
-- 🖥️ **可视化管理面板**：内置 TUI 菜单，直观展示实时状态及 Socks5/Web 访问链接。
+- 🧠 **C&C 动态配置中心**：远端 `FRPS` 地址、`Token`、代理账号密码均由中控 API 实时热下发，全网节点配置秒级平滑切换。
+- 🌍 **地理情报感知与防撞车**：自动探测节点所在物理国家与城市，融合公网 IP 与随机盐值生成全局唯一的 `NODE_ID`，杜绝 NAT 冲突。
+- 🛡️ **Systemd 进程级守护**：核心隧道与心跳保活服务分离，由 Linux 原生 Systemd 接管，崩溃自动拉起，开机自启。
+- 🤫 **幂等性与静默部署**：专为大规模并发“暴兵”设计。支持 `--silent` 静默模式运行，自动检测机器状态：已运行则跳过，配置损坏则自动修复。
+- 🖥️ **TUI 交互式管理大屏**：内置极简终端 UI 菜单，一键查看实时运行状态、提取直通车 URL 链接及追踪服务日志。
 
 ---
 
-## 🚀 部署指南
+## 🚀 快速开始
 
-### 1. 环境变量准备
-在执行点火命令前，系统会从当前环境中读取以下变量：
-- `CC_URL`: 你的中控大脑 API 地址。
-- `CC_SECRET`: 你的中控注册接头暗号（API Key）。
+### 方式一：一键静默点火（推荐用于批量部署 / 云端自动化流水线）
 
-### 2. 一键静默点火 (推荐)
-适用于云原生容器 (如 Salad)、VPS 初始化或定时任务。此命令会先注入变量，再执行静默安装：
+适用于云原生平台启动参数、VPS `user-data` 初始化或 Crontab 定时任务。自动检测拦截重复安装：
 
 ```bash
-curl -sSL -o cc_node.sh [https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh](https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh) && \
-chmod +x cc_node.sh && \
-sudo CC_URL="https://你的中控地址" CC_SECRET="你的接头暗号" ./cc_node.sh --silent
-3. 交互式管理
-直接运行脚本即可进入管理菜单：
+curl -sSL -o cc_node.sh [https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh](https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh) && chmod +x cc_node.sh && sudo CC_URL="https://你的中控地址" CC_SECRET="你的接头暗号" ./cc_node.sh --silent
+方式二：交互式安装（推荐用于单机人工调测）
+带有完整的安装进度条与参数输入提示：
+
+Bash
+curl -sSL -o cc_node.sh [https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh](https://raw.githubusercontent.com/ziren28/config/main/cc_node.sh) && chmod +x cc_node.sh
+sudo ./cc_node.sh
+(注：交互模式下如果留空回车，将尝试使用脚本内预设的默认变量。)
+
+🕹️ 终端管理菜单 (TUI)
+在任何已部署的节点上，直接运行脚本即可呼出本机管理控制台：
 
 Bash
 sudo ./cc_node.sh
-🕹️ 终端管理功能
-⚡ 部署/修复节点：重新触发注册并拉取最新配置。
+菜单功能概览：
 
-📊 运行状态监控：输出实时状态及直接可用的代理连接串。
+⚡ 一键安装并上线节点：重新触发中控注册与配置下发流程。
 
-📝 实时日志：追踪各守护进程的输出。
+📊 查看节点运行状态与配置：查看进程健康度，并直接提取复制 Web / Socks5 直通车链接。
 
-🔄 重启 / 🛑 停止：一键管理所有相关进程。
+📝 实时查看服务日志：动态追踪各核心守护进程的实时输出。
 
-🗑️ 彻底卸载：无残留清理，释放系统资源。
+🔄 重启 / 🛑 停止服务：一键控制所有相关守护进程。
 
-📐 工作流图解
-握手：节点携带 CC_SECRET 向 CC_URL 发起注册。
+🗑️ 彻底卸载清理节点：无残留卸载所有配置与进程，释放系统资源。
 
-下发：中控验证通过，下发专属 Web/Proxy 端口 及加密隧道参数。
+📐 系统架构与工作流
+环境初始化：自动静默安装 curl、jq、wget 等基础依赖。
 
-部署：脚本自动下载组件，渲染配置文件并注册 Systemd 服务。
+侦测阶段：抓取本节点的外网 IP 及 GeoIP 物理位置情报。
 
-守卫：frpc 建立隧道，heartbeat 每 60s 汇报一次健康指标。
+注册阶段：携带身份标识与 CC_SECRET 向中控发起握手请求。
 
-🛠️ 部署要求
-OS: 纯净版 Ubuntu / Debian (推荐) / CentOS / Alpine。
+情报拉取：中控验证通过后，下发战略分配的端口号及全套加密连接配置。
 
-权限: 必须具备 root 或 sudo 权限。
+动态渲染：将获取到的情报渲染进 /etc/frp/frpc.toml 及本地持久化文件中。
 
-组件: 脚本会自动安装 curl、jq、wget。
+守护运行：启动网络隧道，拉起每 60 秒上报节点健康状态的 Heartbeat 守护脚本。
+
+🛠️ 依赖要求
+操作系统: 纯净版 Ubuntu / Debian / CentOS / Alpine (需支持 Systemd)
+
+权限要求: 必须具备 root 权限
+
+网络要求: 需能正常访问公网及目标中控 API
