@@ -7,7 +7,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 确保以 root 权限运行1.1
+# 确保以 root 权限运行v1.2
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./salad_node.sh)${NC}"
   exit 1
@@ -22,10 +22,8 @@ install_node() {
     echo -e "${GREEN}      🚀 开始部署 Salad Node 独立节点 🚀      ${NC}"
     echo -e "${CYAN}=================================================${NC}"
 
-    # 1. 交互输入 (支持回车默认值)
-    read -p "请输入中控大脑 URL [默认: https://ziren28-sala.hf.space]: " INPUT_URL
-    BRAIN_URL=${INPUT_URL:-"https://ziren28-sala.hf.space"}
-    # 自动去除末尾可能多输入的斜杠，防止拼接 URL 时出错
+    read -p "请输入中控大脑 URL [默认: https://sala.181225.xyz]: " INPUT_URL
+    BRAIN_URL=${INPUT_URL:-"https://sala.181225.xyz"}
     BRAIN_URL=${BRAIN_URL%/}
 
     read -p "请输入 REPORT_SECRET [默认: salad_report_maxking2026]: " INPUT_SECRET
@@ -34,7 +32,6 @@ install_node() {
     echo -e "\n${YELLOW}[1/6] 正在安装基础依赖 (curl, jq, wget)...${NC}"
     apt-get update -y -qq && apt-get install -y -qq wget curl jq
 
-    # 2. 探测地理位置与 IP
     echo -e "${YELLOW}[2/6] 正在探测节点网络情报...${NC}"
     IP_INFO=$(curl -s --max-time 5 https://api.ip.sb/geoip || echo "{}")
     COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code')
@@ -49,12 +46,10 @@ install_node() {
         CITY=$(echo "$CITY" | tr -cd '[:alnum:]' | tr '[:lower:]' '[:upper:]' | cut -c 1-6)
     fi
 
-    # 生成唯一的防撞车 NODE_ID
     RANDOM_STR=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 4 | head -n 1)
     NODE_ID="${COUNTRY}-${CITY}-${NODE_IP}-${RANDOM_STR}"
     echo -e "${GREEN}✅ 节点代号确立: ${NODE_ID}${NC}"
 
-    # 3. 向大脑注册 (提取 web_port 和 proxy_port)
     echo -e "${YELLOW}[3/6] 正在向中控大脑 (${BRAIN_URL}) 请求战略端口...${NC}"
     REGISTER_RESP=$(curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
         -H "Content-Type: application/json" \
@@ -66,7 +61,6 @@ install_node() {
         sleep 3; return
     fi
 
-    # 💡 核心修复：匹配后端返回的真实字段名
     BASE_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.web_port')
     SOCKS_PORT=$(echo "$REGISTER_RESP" | jq -r '.data.proxy_port')
 
@@ -77,7 +71,12 @@ install_node() {
 
     echo -e "${GREEN}✅ 获取端口成功！Web: ${BASE_PORT}, Proxy: ${SOCKS_PORT}${NC}"
 
-    # 4. 下载组件
+    cat <<EOT > /etc/salad_node.info
+FRPS_ADDR="frps.181225.xyz"
+WEB_PORT="${BASE_PORT}"
+SOCKS_PORT="${SOCKS_PORT}"
+EOT
+
     echo -e "${YELLOW}[4/6] 正在下载 Gost 与 FRPC...${NC}"
     if [ ! -f "/usr/local/bin/gost" ]; then
         wget -qO- https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gzip -d > /usr/local/bin/gost
@@ -89,10 +88,8 @@ install_node() {
         rm -rf frp.tar.gz frp_0.61.1_linux_amd64
     fi
 
-    # 5. 生成配置与系统服务
     echo -e "${YELLOW}[5/6] 正在生成系统服务与配置文件...${NC}"
     
-    # 💡 核心修复：使用官方最新的 [auth] 语法，防止解析崩溃
     mkdir -p /etc/frp
     cat <<EOT > /etc/frp/frpc.toml
 serverAddr = "frps.181225.xyz"
@@ -117,7 +114,6 @@ localPort = 1080
 remotePort = ${SOCKS_PORT}
 EOT
 
-    # 心跳脚本 (匹配 Python 测试中的字段格式)
     cat <<EOT > /usr/local/bin/salad_heartbeat.sh
 #!/bin/bash
 while true; do
@@ -130,7 +126,6 @@ done
 EOT
     chmod +x /usr/local/bin/salad_heartbeat.sh
 
-    # Systemd 服务注册
     cat <<EOT > /etc/systemd/system/salad-gost.service
 [Unit]
 Description=Salad Gost Proxy
@@ -165,14 +160,18 @@ Restart=always
 WantedBy=multi-user.target
 EOT
 
-    # 6. 启动服务
     echo -e "${YELLOW}[6/6] 正在启动所有守护进程...${NC}"
     systemctl daemon-reload
     systemctl enable --now salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
 
+    # 💡 核心改动：装完直接把战果甩在屏幕上！
     echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并上线。${NC}"
-    echo -e "去你的 Dashboard 查看它吧！"
-    echo -e "按任意键返回主菜单..."
+    echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
+    echo -e "🌐 Web 桌面地址:  ${GREEN}http://frps.181225.xyz:${BASE_PORT}${NC}"
+    echo -e "🧦 Socks5 代理:   ${GREEN}socks5://maxking:maxking2026@frps.181225.xyz:${SOCKS_PORT}${NC}"
+    echo -e "\n${YELLOW}(提示: 直接复制链接使用，日后也可在主菜单按 2 查看)${NC}"
+    
+    echo -e "\n按任意键返回主菜单..."
     read -n 1
 }
 
@@ -190,6 +189,7 @@ uninstall_node() {
     
     rm -f /usr/local/bin/salad_heartbeat.sh
     rm -rf /etc/frp
+    rm -f /etc/salad_node.info
     echo -e "${GREEN}✅ 清理完成！大脑将在无心跳后自动回收此节点的端口。${NC}"
     sleep 2
 }
@@ -199,10 +199,24 @@ uninstall_node() {
 # ==========================================
 show_status() {
     clear
-    echo -e "${CYAN}--- 服务运行状态 ---${NC}"
-    systemctl is-active --quiet salad-frpc && echo -e "FRPC 隧道: ${GREEN}运行中 (Running)${NC}" || echo -e "FRPC 隧道: ${RED}已停止 (Stopped)${NC}"
-    systemctl is-active --quiet salad-gost && echo -e "Gost 代理: ${GREEN}运行中 (Running)${NC}" || echo -e "Gost 代理: ${RED}已停止 (Stopped)${NC}"
-    systemctl is-active --quiet salad-heartbeat && echo -e "心跳守护:  ${GREEN}运行中 (Running)${NC}" || echo -e "心跳守护:  ${RED}已停止 (Stopped)${NC}"
+    echo -e "${CYAN}=================================================${NC}"
+    echo -e "${GREEN}                节点运行状态监控                 ${NC}"
+    echo -e "${CYAN}=================================================${NC}"
+    
+    systemctl is-active --quiet salad-frpc && echo -e "FRPC 隧道: [ ${GREEN}运行中${NC} ]" || echo -e "FRPC 隧道: [ ${RED}已停止${NC} ]"
+    systemctl is-active --quiet salad-gost && echo -e "Gost 代理: [ ${GREEN}运行中${NC} ]" || echo -e "Gost 代理: [ ${RED}已停止${NC} ]"
+    systemctl is-active --quiet salad-heartbeat && echo -e "心跳守护:  [ ${GREEN}运行中${NC} ]" || echo -e "心跳守护:  [ ${RED}已停止${NC} ]"
+    
+    if [ -f /etc/salad_node.info ]; then
+        source /etc/salad_node.info
+        echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
+        echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
+        echo -e "🧦 Socks5 代理:   ${GREEN}socks5://maxking:maxking2026@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
+        echo -e "\n${YELLOW}(提示: 直接复制 Socks5 链接到 V2rayN/Clash 等代理软件，或浏览器插件中即可上网)${NC}"
+    else
+        echo -e "\n${YELLOW}⚠️ 暂无访问信息 (可能是还没安装或者安装失败了)${NC}"
+    fi
+
     echo -e "\n按任意键返回主菜单..."
     read -n 1
 }
@@ -226,10 +240,10 @@ show_logs() {
 while true; do
     clear
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.1 🚀          ${NC}"
+    echo -e "${GREEN}          🚀 Salad 节点管理终端 V3.3 🚀          ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "  ${YELLOW}1.${NC} ⚡ 一键安装并上线节点 (Install & Start)"
-    echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态 (View Status)"
+    echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态与配置 (View Status)"
     echo -e "  ${YELLOW}3.${NC} 📝 实时查看服务日志 (View Logs)"
     echo -e "  ${YELLOW}4.${NC} 🔄 重启所有核心服务 (Restart All)"
     echo -e "  ${YELLOW}5.${NC} 🛑 停止所有核心服务 (Stop All)"
@@ -253,7 +267,7 @@ while true; do
            echo -e "${GREEN}✅ 已停止！${NC}"
            sleep 1 ;;
         9) 
-           read -p "确定要卸载吗？(y/n): " confirm
+           read -p "确定要彻底卸载并释放端口吗？(y/n): " confirm
            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then uninstall_node; fi
            ;;
         0) clear; exit 0 ;;
