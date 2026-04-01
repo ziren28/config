@@ -18,7 +18,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # ==========================================
-# 🛠️ 环境检测模块：判断是否有 systemd
+# 🛠️ 环境检测与清理模块
 # ==========================================
 check_systemd() {
     if pidof systemd &> /dev/null || [ -d "/run/systemd/system" ]; then
@@ -26,6 +26,16 @@ check_systemd() {
     else
         return 1 # false
     fi
+}
+
+cleanup_zombies() {
+    echo -e "${YELLOW}🧹 正在扫描并清理遗留的无主进程 (释放被占用的端口)...${NC}"
+    # 暴力超度可能存在的脱管进程
+    pkill -x gost 2>/dev/null
+    pkill -x frpc 2>/dev/null
+    pkill -f "salad_heartbeat.sh" 2>/dev/null
+    # 给系统一点时间彻底释放 TCP 端口
+    sleep 2 
 }
 
 # ==========================================
@@ -84,10 +94,9 @@ install_node() {
     BRAIN_URL=${BRAIN_URL%/}
     
     echo -e "\n${YELLOW}[1/7] 正在安装基础依赖 (包含 Supervisor)...${NC}"
-    # 强制安装 supervisor
     apt-get update -y -qq && apt-get install -y -qq wget curl jq procps supervisor > /dev/null 2>&1
 
-    echo -e "${YELLOW}[2/7] 正在探测节点网络情报 (使用 ipwho.is)...${NC}"
+    echo -e "${YELLOW}[2/7] 正在探测节点网络情报...${NC}"
     IP_INFO=$(curl -s --max-time 5 https://ipwho.is/ || echo "{}")
     COUNTRY=$(echo "$IP_INFO" | jq -r '.country_code // "UNK"')
     CITY=$(echo "$IP_INFO" | jq -r '.city // "UNK"')
@@ -141,15 +150,21 @@ PROXY_USER="${PROXY_USER}"
 PROXY_PASS="${PROXY_PASS}"
 EOT
 
-    echo -e "${YELLOW}[5/7] 正在下载 Gost 与 FRPC...${NC}"
+    echo -e "${YELLOW}[5/7] 正在下载 Gost 与 FRPC (v0.68.0)...${NC}"
     if [ ! -f "/usr/local/bin/gost" ]; then
         wget -qO- https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gzip -d > /usr/local/bin/gost
         chmod +x /usr/local/bin/gost
     fi
-    if [ ! -f "/usr/local/bin/frpc" ]; then
-        wget -qO frp.tar.gz https://github.com/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_amd64.tar.gz
-        tar -zxf frp.tar.gz && mv frp_0.61.1_linux_amd64/frpc /usr/local/bin/
-        rm -rf frp.tar.gz frp_0.61.1_linux_amd64
+    
+    # 检测 FRPC 版本，如果不是 0.68.0 就强制覆盖更新
+    FRPC_VER=$(/usr/local/bin/frpc -v 2>/dev/null)
+    if [ "$FRPC_VER" != "0.68.0" ]; then
+        echo -e "${CYAN}检测到 FRPC 版本需要更新，正在拉取 v0.68.0...${NC}"
+        rm -f /usr/local/bin/frpc
+        wget -qO frp.tar.gz https://github.com/fatedier/frp/releases/download/v0.68.0/frp_0.68.0_linux_amd64.tar.gz
+        tar -zxf frp.tar.gz && mv frp_0.68.0_linux_amd64/frpc /usr/local/bin/
+        rm -rf frp.tar.gz frp_0.68.0_linux_amd64
+        chmod +x /usr/local/bin/frpc
     fi
 
     echo -e "${YELLOW}[6/7] 正在动态渲染配置文件...${NC}"
@@ -192,8 +207,10 @@ EOT
 
     echo -e "${YELLOW}[7/7] 正在注册并启动守护进程...${NC}"
     
+    # 关键步骤：启动守护进程前，强制清理所有可能冲突的僵尸进程！
+    cleanup_zombies
+
     if check_systemd; then
-        # 宿主机环境：使用 systemd
         cat <<EOT > /etc/systemd/system/salad-gost.service
 [Unit]
 Description=Salad Gost Proxy
@@ -230,7 +247,6 @@ EOT
         systemctl daemon-reload
         systemctl enable --now salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
     else
-        # 容器环境：使用 Supervisor 强力接管
         mkdir -p /etc/supervisor/conf.d
         
         cat <<EOT > /etc/supervisor/conf.d/salad-gost.conf
@@ -265,10 +281,9 @@ EOT
             /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
         fi
         
-        # 让 supervisor 重新读取并启动所有我们的进程
         supervisorctl reread >/dev/null 2>&1
         supervisorctl update >/dev/null 2>&1
-        supervisorctl start salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
+        supervisorctl restart salad-gost salad-frpc salad-heartbeat >/dev/null 2>&1
     fi
 
     echo -e "\n${GREEN}🎉 部署完成！节点已全自动武装并受守护进程保护。${NC}"
@@ -320,6 +335,8 @@ uninstall_node() {
         rm -f /etc/supervisor/conf.d/salad-*.conf
         supervisorctl update 2>/dev/null
     fi
+    
+    cleanup_zombies # 卸载时也超度一下，以防万一
     
     rm -f /usr/local/bin/salad_heartbeat.sh
     rm -rf /etc/frp
@@ -373,7 +390,7 @@ fi
 while true; do
     clear
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}          🚀 Salad 节点管理终端 V4.0 🚀          ${NC}"
+    echo -e "${GREEN}          🚀 Salad 节点管理终端 V4.1 🚀          ${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "  ${YELLOW}1.${NC} ⚡ 一键安装并上线节点 (Install & Start)"
     echo -e "  ${YELLOW}2.${NC} 📊 查看节点运行状态与配置 (View Status)"
@@ -391,6 +408,7 @@ while true; do
         3) show_logs ;;
         4) 
            echo "正在重启..."
+           cleanup_zombies # 重启前先清理，保证干净启动
            if check_systemd; then
                systemctl restart salad-gost salad-frpc salad-heartbeat
            else
@@ -405,6 +423,7 @@ while true; do
            else
                supervisorctl stop salad-gost salad-frpc salad-heartbeat
            fi
+           cleanup_zombies # 停止后顺手补一刀，确保死透
            echo -e "${GREEN}✅ 已停止！${NC}"
            sleep 1 ;;
         9) 
