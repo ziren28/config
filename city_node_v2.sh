@@ -13,7 +13,7 @@ DEFAULT_REPORT_SECRET=${CC_SECRET:-"Change_Me_Please"}
 
 # 确保以 root 权限运行
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./city_node.sh)${NC}"
+    echo -e "${RED}❌ 请以 root 权限运行此脚本 (例如: sudo ./city_node_v2.sh)${NC}"
     exit 1
 fi
 
@@ -66,6 +66,7 @@ print_status_info() {
         echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
         echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
         echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
+        echo -e "🛡️ HTTP 代理:     ${GREEN}http://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
     else
         echo -e "\n${YELLOW}⚠️ 暂无访问信息 (可能是还没安装或者安装失败了)${NC}"
     fi
@@ -160,7 +161,7 @@ install_node() {
     echo -e "${YELLOW}[4/7] 正在拉取全局战略配置...${NC}"
     SYS_CONFIG_RESP=$(curl -s -X GET -H "X-API-Key: ${REPORT_SECRET}" "${BRAIN_URL}/api/system/configs")
     
-    # 强制覆盖指向指定的 FRPS 域名
+    # 强制覆盖指向指定的 FRPS 域名 (按要求修改此处)
     FRPS_ADDR="pro.999968.xyz"
     DISPLAY_ADDR="pro.999968.xyz"
     
