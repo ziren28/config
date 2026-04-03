@@ -193,9 +193,9 @@ EOT
     fi
 
     echo -e "${YELLOW}[6/7] 正在动态渲染配置文件 (已开启集群负载与自动容灾)...${NC}"
-    
-    mkdir -p /etc/frp
-    cat <<EOT > /etc/frp/frpc.toml
+    
+    mkdir -p /etc/frp
+    cat <<EOT > /etc/frp/frpc.toml
 serverAddr = "${FRPS_ADDR}"
 serverPort = ${FRPS_PORT}
 
@@ -235,7 +235,7 @@ EOT
 while true; do
     curl -s -X POST -H "X-API-Key: ${REPORT_SECRET}" \
         -H "Content-Type: application/json" \
-        -d "{\\"node_id\\": \\"${NODE_ID}\\", \\"cpu\\": \\"10%\\", \\"mem\\": \\"256MB\\", \\"uptime\\": \\"running\\"}" \
+        -d "{\"node_id\": \"${NODE_ID}\", \"cpu\": \"10%\", \"mem\": \"256MB\", \"uptime\": \"running\"}" \
         "${BRAIN_URL}/api/node/heartbeat" > /dev/null
     sleep 60
 done
