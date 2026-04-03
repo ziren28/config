@@ -192,7 +192,7 @@ EOT
         chmod +x /usr/local/bin/frpc
     fi
 
-    echo -e "${YELLOW}[6/7] 正在动态渲染配置文件...${NC}"
+    echo -e "${YELLOW}[6/7] 正在动态渲染配置文件 (已开启集群负载与自动容灾)...${NC}"
     
     mkdir -p /etc/frp
     cat <<EOT > /etc/frp/frpc.toml
@@ -209,6 +209,12 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = 3000
 remotePort = ${BASE_PORT}
+load_balancer.group = "web_lb_group_${BASE_PORT}"
+load_balancer.group_key = "${FRPS_TOKEN}_lb_secret"
+health_check.type = "tcp"
+health_check.timeout_seconds = 3
+health_check.max_failed = 3
+health_check.interval_seconds = 10
 
 [[proxies]]
 name = "socks5-${COUNTRY}-${CITY_CODE}-${NODE_IP}-sock${SOCKS_PORT}"
@@ -216,6 +222,12 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = 1080
 remotePort = ${SOCKS_PORT}
+load_balancer.group = "socks5_lb_group_${SOCKS_PORT}"
+load_balancer.group_key = "${FRPS_TOKEN}_lb_secret"
+health_check.type = "tcp"
+health_check.timeout_seconds = 3
+health_check.max_failed = 3
+health_check.interval_seconds = 10
 EOT
 
     cat <<EOT > /usr/local/bin/salad_heartbeat.sh
