@@ -64,7 +64,7 @@ print_status_info() {
     if [ -f /etc/salad_node.info ]; then
         source /etc/salad_node.info
         echo -e "\n${CYAN}--- 🚀 节点访问直通车 ---${NC}"
-        echo -e "🌐 Web 桌面地址:  ${GREEN}http://${FRPS_ADDR}:${WEB_PORT}${NC}"
+        echo -e "🌐 Web 桌面地址:  ${GREEN}https://${FRPS_ADDR}:${WEB_PORT}${NC}"
         echo -e "🧦 Socks5 代理:   ${GREEN}socks5://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
         echo -e "🛡️ HTTP 代理:     ${GREEN}http://${PROXY_USER}:${PROXY_PASS}@${FRPS_ADDR}:${SOCKS_PORT}${NC}"
     else
