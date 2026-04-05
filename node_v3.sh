@@ -1875,8 +1875,10 @@ EOF
     if ! pgrep -x "supervisord" > /dev/null 2>/dev/null; then
         /usr/bin/supervisord -c /etc/supervisor/supervisord.conf 2>/dev/null || true
     fi
-    supervisorctl reread 2>/dev/null && supervisorctl update 2>/dev/null
-    supervisorctl restart all 2>/dev/null || true
+    supervisorctl stop all 2>/dev/null || true
+    supervisorctl reread 2>/dev/null
+    supervisorctl update 2>/dev/null
+    supervisorctl start all 2>/dev/null || true
 
     # [8] 展示结果
     info "[8/8] 等待隧道分配域名..."
@@ -1993,8 +1995,11 @@ EOF
     if ! pgrep -x "supervisord" > /dev/null 2>/dev/null; then
         /usr/bin/supervisord -c /etc/supervisor/supervisord.conf 2>/dev/null || true
     fi
-    supervisorctl reread 2>/dev/null && supervisorctl update 2>/dev/null
-    supervisorctl restart all 2>/dev/null || true
+    # 强制重载：先停全部再重新注册，确保环境变量等配置更新生效
+    supervisorctl stop all 2>/dev/null || true
+    supervisorctl reread 2>/dev/null
+    supervisorctl update 2>/dev/null
+    supervisorctl start all 2>/dev/null || true
 
     # 等隧道
     info "等待隧道分配域名..."
