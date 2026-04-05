@@ -1293,7 +1293,6 @@ backup_full() {
         /etc/ssh/sshd_config.d/custom.conf
         /usr/local/bin/server-manager.sh
         /usr/local/bin/server-dashboard.py
-        /usr/local/bin/README.md
     )
 
     # 过滤存在的路径
@@ -1363,7 +1362,6 @@ backup_config() {
         /etc/ssh/sshd_config.d/custom.conf
         /usr/local/bin/server-manager.sh
         /usr/local/bin/server-dashboard.py
-        /usr/local/bin/README.md
     )
 
     local existing=()
@@ -1533,7 +1531,6 @@ if [[ "$SILENT_MODE" == "true" ]]; then
                 /etc/ssh/sshd_config.d/custom.conf
                 /usr/local/bin/server-manager.sh
                 /usr/local/bin/server-dashboard.py
-                /usr/local/bin/README.md
             )
             existing=()
             for item in "${items[@]}"; do
