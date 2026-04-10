@@ -88,7 +88,7 @@ auth.token = "maxking2026"
 name = "tcp_${P1}_${RANDOM_SUFFIX}"
 type = "tcp"
 localIP = "127.0.0.1"
-localPort = ${P1}
+localPort = 1080
 remotePort = ${P1}
 
 [[proxies]]
